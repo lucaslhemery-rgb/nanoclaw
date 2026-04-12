@@ -1,0 +1,139 @@
+import { logger } from './logger.js';
+import {
+  NOTION_API_KEY,
+  NOTION_POLL_INTERVAL,
+  NOTION_PROJECTS_DB_ID,
+} from './config.js';
+import { upsertNotionProject } from './db.js';
+import type { NotionProjectActivity, WebhookDeps } from './types.js';
+
+const NOTION_API_BASE = 'https://api.notion.com/v1';
+const NOTION_VERSION = '2022-06-28';
+
+interface NotionPage {
+  id: string;
+  last_edited_time: string;
+  properties: Record<string, any>;
+}
+
+export function parseNotionProjects(results: NotionPage[]): NotionProjectActivity[] {
+  const now = new Date().toISOString();
+  return results.map((page) => {
+    const nameProperty = page.properties?.Name || page.properties?.Nom;
+    const titleArray = nameProperty?.title || [];
+    const projectName = titleArray.length > 0 ? titleArray[0].plain_text : 'Sans titre';
+
+    const statusProperty = page.properties?.Status || page.properties?.Statut;
+    const status = statusProperty?.status?.name || statusProperty?.select?.name || '';
+
+    const clientProperty = page.properties?.Client;
+    const clientName = clientProperty?.select?.name || clientProperty?.rich_text?.[0]?.plain_text || '';
+    const clientSlug = clientName.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '');
+
+    return {
+      notion_page_id: page.id,
+      client_slug: clientSlug,
+      project_name: projectName,
+      status,
+      last_edited_time: page.last_edited_time,
+      last_checked_time: now,
+      last_status_change_time: null,
+      previous_status: null,
+    };
+  });
+}
+
+export function formatStatusChangeNotification(
+  clientSlug: string,
+  projectName: string,
+  previousStatus: string,
+  newStatus: string,
+): string {
+  return [
+    `*Notion* - Changement de statut`,
+    `Client : ${clientSlug}`,
+    `Projet : ${projectName}`,
+    `${previousStatus} → ${newStatus}`,
+  ].join('\n');
+}
+
+async function queryNotionDatabase(): Promise<NotionPage[]> {
+  const pages: NotionPage[] = [];
+  let cursor: string | undefined;
+
+  do {
+    const body: Record<string, unknown> = { page_size: 100 };
+    if (cursor) body.start_cursor = cursor;
+
+    const res = await fetch(`${NOTION_API_BASE}/databases/${NOTION_PROJECTS_DB_ID}/query`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${NOTION_API_KEY}`,
+        'Notion-Version': NOTION_VERSION,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(`Notion API error ${res.status}: ${text}`);
+    }
+
+    const data = await res.json() as { results: NotionPage[]; has_more: boolean; next_cursor?: string };
+    pages.push(...data.results);
+    cursor = data.has_more ? data.next_cursor : undefined;
+  } while (cursor);
+
+  return pages;
+}
+
+async function pollOnce(deps: WebhookDeps): Promise<void> {
+  const mainJid = deps.getMainGroupJid();
+  if (!mainJid) {
+    logger.warn('Notion poller: no main group, skipping');
+    return;
+  }
+
+  const pages = await queryNotionDatabase();
+  const projects = parseNotionProjects(pages);
+
+  const notifications: string[] = [];
+
+  for (const project of projects) {
+    const { statusChanged, previousStatus } = upsertNotionProject(project);
+    if (statusChanged && previousStatus) {
+      notifications.push(formatStatusChangeNotification(
+        project.client_slug,
+        project.project_name,
+        previousStatus,
+        project.status,
+      ));
+    }
+  }
+
+  if (notifications.length > 0) {
+    await deps.sendMessage(mainJid, notifications.join('\n\n'));
+  }
+
+  logger.debug({ projectCount: projects.length, changes: notifications.length }, 'Notion poll completed');
+}
+
+export function startNotionPoller(deps: WebhookDeps): void {
+  if (!NOTION_API_KEY || !NOTION_PROJECTS_DB_ID) {
+    logger.warn('Notion: NOTION_API_KEY or NOTION_PROJECTS_DB_ID not set, skipping poller');
+    return;
+  }
+
+  logger.info({ intervalMs: NOTION_POLL_INTERVAL }, 'Starting Notion poller');
+
+  // Premier poll après 10 secondes (laisser le temps au système de démarrer)
+  setTimeout(() => {
+    pollOnce(deps).catch((err) => logger.error({ err }, 'Notion poll error'));
+  }, 10_000);
+
+  // Polls suivants
+  setInterval(() => {
+    pollOnce(deps).catch((err) => logger.error({ err }, 'Notion poll error'));
+  }, NOTION_POLL_INTERVAL);
+}

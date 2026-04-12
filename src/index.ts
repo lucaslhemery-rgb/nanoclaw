@@ -65,6 +65,7 @@ import { Channel, NewMessage, RegisteredGroup, WebhookDeps } from './types.js';
 import { startWebhookServer } from './webhook-server.js';
 import './webhooks/fathom.js';
 import { startNotionPoller } from './notion-poller.js';
+import { runProjectScan } from './project-scanner.js';
 import { logger } from './logger.js';
 
 // Re-export for backwards compatibility during refactor
@@ -678,6 +679,36 @@ async function main(): Promise<void> {
 
   // Start Notion project poller (1.1 - Cerveau réactif)
   startNotionPoller(webhookDeps);
+
+  // Project inactivity scan - lundi 9h (1.3 - Cerveau réactif)
+  const scheduleWeeklyScan = () => {
+    const now = new Date();
+    const nextMonday = new Date(now);
+    const daysUntilMonday = (8 - now.getDay()) % 7 || 7;
+    nextMonday.setDate(now.getDate() + daysUntilMonday);
+    nextMonday.setHours(9, 0, 0, 0);
+
+    // Si on est lundi avant 9h, c'est aujourd'hui
+    if (now.getDay() === 1 && now.getHours() < 9) {
+      nextMonday.setDate(now.getDate());
+    }
+
+    const msUntilNext = nextMonday.getTime() - now.getTime();
+    logger.info({ nextRun: nextMonday.toISOString() }, 'Project scan scheduled');
+
+    setTimeout(() => {
+      runProjectScan(webhookDeps).catch((err) =>
+        logger.error({ err }, 'Project scan error'),
+      );
+      // Re-schedule weekly
+      setInterval(() => {
+        runProjectScan(webhookDeps).catch((err) =>
+          logger.error({ err }, 'Project scan error'),
+        );
+      }, 7 * 24 * 60 * 60 * 1000);
+    }, msUntilNext);
+  };
+  scheduleWeeklyScan();
 
   // Start subsystems (independently of connection handler)
   startSchedulerLoop({

@@ -6,6 +6,11 @@ import { google, gmail_v1 } from 'googleapis';
 import { OAuth2Client } from 'google-auth-library';
 
 // isMain flag is used instead of MAIN_GROUP_FOLDER constant
+import { CLIENT_EMAIL_MAPPING_PATH } from '../config.js';
+import {
+  classifyEmail,
+  formatUrgentEmailNotification,
+} from './gmail-triage.js';
 import { logger } from '../logger.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 import {
@@ -40,13 +45,31 @@ export class GmailChannel implements Channel {
   private threadMeta = new Map<string, ThreadMeta>();
   private consecutiveErrors = 0;
   private userEmail = '';
+  private clientEmailMap: Record<string, string> = {};
 
   constructor(opts: GmailChannelOpts, pollIntervalMs = 60000) {
     this.opts = opts;
     this.pollIntervalMs = pollIntervalMs;
   }
 
+  private loadClientEmailMap(): void {
+    try {
+      if (fs.existsSync(CLIENT_EMAIL_MAPPING_PATH)) {
+        this.clientEmailMap = JSON.parse(
+          fs.readFileSync(CLIENT_EMAIL_MAPPING_PATH, 'utf-8'),
+        );
+        logger.info(
+          { count: Object.keys(this.clientEmailMap).length },
+          'Client email mapping loaded',
+        );
+      }
+    } catch (err) {
+      logger.warn({ err }, 'Failed to load client email mapping');
+    }
+  }
+
   async connect(): Promise<void> {
+    this.loadClientEmailMap();
     const credDir = path.join(os.homedir(), '.gmail-mcp');
     const keysPath = path.join(credDir, 'gcp-oauth.keys.json');
     const tokensPath = path.join(credDir, 'credentials.json');
@@ -91,9 +114,13 @@ export class GmailChannel implements Channel {
 
     // Start polling with error backoff
     const schedulePoll = () => {
-      const backoffMs = this.consecutiveErrors > 0
-        ? Math.min(this.pollIntervalMs * Math.pow(2, this.consecutiveErrors), 30 * 60 * 1000)
-        : this.pollIntervalMs;
+      const backoffMs =
+        this.consecutiveErrors > 0
+          ? Math.min(
+              this.pollIntervalMs * Math.pow(2, this.consecutiveErrors),
+              30 * 60 * 1000,
+            )
+          : this.pollIntervalMs;
       this.pollTimer = setTimeout(() => {
         this.pollForMessages()
           .catch((err) => logger.error({ err }, 'Gmail poll error'))
@@ -210,8 +237,18 @@ export class GmailChannel implements Channel {
       this.consecutiveErrors = 0;
     } catch (err) {
       this.consecutiveErrors++;
-      const backoffMs = Math.min(this.pollIntervalMs * Math.pow(2, this.consecutiveErrors), 30 * 60 * 1000);
-      logger.error({ err, consecutiveErrors: this.consecutiveErrors, nextPollMs: backoffMs }, 'Gmail poll failed');
+      const backoffMs = Math.min(
+        this.pollIntervalMs * Math.pow(2, this.consecutiveErrors),
+        30 * 60 * 1000,
+      );
+      logger.error(
+        {
+          err,
+          consecutiveErrors: this.consecutiveErrors,
+          nextPollMs: backoffMs,
+        },
+        'Gmail poll failed',
+      );
     }
   }
 
@@ -266,6 +303,9 @@ export class GmailChannel implements Channel {
     // Store chat metadata for group discovery
     this.opts.onChatMetadata(chatJid, timestamp, subject, 'gmail', false);
 
+    // Triage: classify email urgency
+    const triage = classifyEmail(senderEmail, subject, body, this.clientEmailMap);
+
     // Find the main group to deliver the email notification
     const groups = this.opts.registeredGroups();
     const mainEntry = Object.entries(groups).find(
@@ -281,7 +321,18 @@ export class GmailChannel implements Channel {
     }
 
     const mainJid = mainEntry[0];
-    const content = `[Email from ${senderName} <${senderEmail}>]\nSubject: ${subject}\n\n${body}`;
+
+    // Log urgent emails
+    if (triage.priority === 'urgent') {
+      logger.info(
+        { senderEmail, subject, reason: triage.reason, clientSlug: triage.clientSlug },
+        'Urgent email detected',
+      );
+    }
+
+    const priorityTag = triage.priority === 'urgent' ? 'URGENT - ' : '';
+    const clientTag = triage.clientSlug ? ` [${triage.clientSlug}]` : '';
+    const content = `[${priorityTag}Email from ${senderName} <${senderEmail}>${clientTag}]\nSubject: ${subject}\n\n${body}`;
 
     this.opts.onMessage(mainJid, {
       id: messageId,

@@ -7,7 +7,7 @@ import { isValidTimezone } from './timezone.js';
 // Read config values from .env (falls back to process.env).
 // Secrets (API keys, tokens) are NOT read here — they are loaded only
 // by the credential proxy (credential-proxy.ts), never exposed to containers.
-const envConfig = readEnvFile(['ASSISTANT_NAME', 'ASSISTANT_HAS_OWN_NUMBER', 'TZ']);
+const envConfig = readEnvFile(['ASSISTANT_NAME', 'ASSISTANT_HAS_OWN_NUMBER', 'TZ', 'FATHOM_WEBHOOK_SECRET']);
 
 export const ASSISTANT_NAME =
   process.env.ASSISTANT_NAME || envConfig.ASSISTANT_NAME || 'Andy';
@@ -51,6 +51,42 @@ export const CONTAINER_MAX_OUTPUT_SIZE = parseInt(
 export const CREDENTIAL_PROXY_PORT = parseInt(
   process.env.CREDENTIAL_PROXY_PORT || '3001',
   10,
+);
+export const WEBHOOK_PORT = parseInt(
+  process.env.WEBHOOK_PORT || '3002',
+  10,
+);
+export const WEBHOOK_HOST = process.env.WEBHOOK_HOST || '0.0.0.0';
+export const WEBHOOK_BODY_LIMIT_BYTES = parseInt(
+  process.env.WEBHOOK_BODY_LIMIT_BYTES || '1048576',
+  10,
+); // 1 MB default
+export const FATHOM_WEBHOOK_SECRET =
+  process.env.FATHOM_WEBHOOK_SECRET || envConfig.FATHOM_WEBHOOK_SECRET || '';
+
+// Notion polling configuration
+const notionEnv = readEnvFile(['NOTION_API_KEY', 'NOTION_PROJECTS_DB_ID']);
+
+export const NOTION_API_KEY =
+  process.env.NOTION_API_KEY || notionEnv.NOTION_API_KEY || '';
+export const NOTION_PROJECTS_DB_ID =
+  process.env.NOTION_PROJECTS_DB_ID || notionEnv.NOTION_PROJECTS_DB_ID || '';
+export const NOTION_POLL_INTERVAL = parseInt(
+  process.env.NOTION_POLL_INTERVAL || '900000', // 15 minutes
+  10,
+);
+
+export const CLIENT_MAPPING_PATH = path.join(
+  HOME_DIR,
+  '.config',
+  'nanoclaw',
+  'client-mapping.json',
+);
+export const CLIENT_EMAIL_MAPPING_PATH = path.join(
+  HOME_DIR,
+  '.config',
+  'nanoclaw',
+  'client-email-mapping.json',
 );
 export const MAX_MESSAGES_PER_PROMPT = Math.max(
   1,

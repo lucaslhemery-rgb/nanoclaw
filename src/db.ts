@@ -7,6 +7,7 @@ import { isValidGroupFolder } from './group-folder.js';
 import { logger } from './logger.js';
 import {
   NewMessage,
+  NotionProjectActivity,
   RegisteredGroup,
   ScheduledTask,
   TaskRunLog,
@@ -81,6 +82,17 @@ function createSchema(database: Database.Database): void {
       added_at TEXT NOT NULL,
       container_config TEXT,
       requires_trigger INTEGER DEFAULT 1
+    );
+
+    CREATE TABLE IF NOT EXISTS notion_project_activity (
+      notion_page_id TEXT PRIMARY KEY,
+      client_slug TEXT NOT NULL,
+      project_name TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT '',
+      last_edited_time TEXT NOT NULL,
+      last_checked_time TEXT NOT NULL,
+      last_status_change_time TEXT,
+      previous_status TEXT
     );
   `);
 
@@ -539,6 +551,51 @@ export function logTaskRun(log: TaskRunLog): void {
     log.result,
     log.error,
   );
+}
+
+// --- Notion project activity ---
+
+export function upsertNotionProject(project: NotionProjectActivity): { statusChanged: boolean; previousStatus: string | null } {
+  const existing = db
+    .prepare('SELECT status FROM notion_project_activity WHERE notion_page_id = ?')
+    .get(project.notion_page_id) as { status: string } | undefined;
+
+  const statusChanged = existing !== undefined && existing.status !== project.status;
+
+  db.prepare(`
+    INSERT INTO notion_project_activity (notion_page_id, client_slug, project_name, status, last_edited_time, last_checked_time, last_status_change_time, previous_status)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(notion_page_id) DO UPDATE SET
+      status = excluded.status,
+      last_edited_time = excluded.last_edited_time,
+      last_checked_time = excluded.last_checked_time,
+      last_status_change_time = CASE WHEN excluded.status != notion_project_activity.status THEN excluded.last_checked_time ELSE notion_project_activity.last_status_change_time END,
+      previous_status = CASE WHEN excluded.status != notion_project_activity.status THEN notion_project_activity.status ELSE notion_project_activity.previous_status END
+  `).run(
+    project.notion_page_id,
+    project.client_slug,
+    project.project_name,
+    project.status,
+    project.last_edited_time,
+    project.last_checked_time,
+    project.last_status_change_time,
+    project.previous_status,
+  );
+
+  return { statusChanged, previousStatus: existing?.status ?? null };
+}
+
+export function getInactiveProjects(daysSince: number): NotionProjectActivity[] {
+  const cutoff = new Date(Date.now() - daysSince * 24 * 60 * 60 * 1000).toISOString();
+  return db
+    .prepare('SELECT * FROM notion_project_activity WHERE last_edited_time < ? ORDER BY last_edited_time ASC')
+    .all(cutoff) as NotionProjectActivity[];
+}
+
+export function getAllNotionProjects(): NotionProjectActivity[] {
+  return db
+    .prepare('SELECT * FROM notion_project_activity ORDER BY client_slug')
+    .all() as NotionProjectActivity[];
 }
 
 // --- Router state accessors ---

@@ -107,3 +107,28 @@ export type OnChatMetadata = (
   channel?: string,
   isGroup?: boolean,
 ) => void;
+
+// --- Webhook abstraction ---
+
+export interface WebhookDeps {
+  sendMessage: (jid: string, text: string) => Promise<void>;
+  findChannel: (jid: string) => Channel | undefined;
+  getMainGroupJid: () => string | null;
+  registeredGroups: () => Record<string, RegisteredGroup>;
+}
+
+export interface WebhookHandler {
+  verify(headers: Record<string, string | undefined>, rawBody: Buffer): boolean;
+  handle(payload: unknown, deps: WebhookDeps): Promise<void>;
+}
+
+export interface NotionProjectActivity {
+  notion_page_id: string;
+  client_slug: string;
+  project_name: string;
+  status: string;
+  last_edited_time: string;
+  last_checked_time: string;
+  last_status_change_time: string | null;
+  previous_status: string | null;
+}

@@ -9,7 +9,6 @@ import { OAuth2Client } from 'google-auth-library';
 import { CLIENT_EMAIL_MAPPING_PATH } from '../config.js';
 import {
   classifyEmail,
-  formatUrgentEmailNotification,
 } from './gmail-triage.js';
 import { logger } from '../logger.js';
 import { registerChannel, ChannelOpts } from './registry.js';
@@ -304,13 +303,16 @@ export class GmailChannel implements Channel {
     this.opts.onChatMetadata(chatJid, timestamp, subject, 'gmail', false);
 
     // Triage: classify email urgency
-    const triage = classifyEmail(senderEmail, subject, body, this.clientEmailMap);
+    const triage = classifyEmail(
+      senderEmail,
+      subject,
+      body,
+      this.clientEmailMap,
+    );
 
     // Find the main group to deliver the email notification
     const groups = this.opts.registeredGroups();
-    const mainEntry = Object.entries(groups).find(
-      ([, g]) => g.isMain === true,
-    );
+    const mainEntry = Object.entries(groups).find(([, g]) => g.isMain === true);
 
     if (!mainEntry) {
       logger.debug(
@@ -325,7 +327,12 @@ export class GmailChannel implements Channel {
     // Log urgent emails
     if (triage.priority === 'urgent') {
       logger.info(
-        { senderEmail, subject, reason: triage.reason, clientSlug: triage.clientSlug },
+        {
+          senderEmail,
+          subject,
+          reason: triage.reason,
+          clientSlug: triage.clientSlug,
+        },
         'Urgent email detected',
       );
     }

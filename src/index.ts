@@ -61,7 +61,10 @@ import {
   shouldDropMessage,
 } from './sender-allowlist.js';
 import { startSchedulerLoop } from './task-scheduler.js';
-import { Channel, NewMessage, RegisteredGroup } from './types.js';
+import { Channel, NewMessage, RegisteredGroup, WebhookDeps } from './types.js';
+import { startWebhookServer } from './webhook-server.js';
+import './webhooks/fathom.js';
+import { startNotionPoller } from './notion-poller.js';
 import { logger } from './logger.js';
 
 // Re-export for backwards compatibility during refactor
@@ -535,10 +538,14 @@ async function main(): Promise<void> {
     PROXY_BIND_HOST,
   );
 
+  // webhookServer is initialised after channels connect — declare here so shutdown can reference it
+  let webhookServer: import('http').Server | null = null;
+
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
     proxyServer.close();
+    webhookServer?.close();
     await queue.shutdown(10000);
     for (const ch of channels) await ch.disconnect();
     process.exit(0);
@@ -648,6 +655,29 @@ async function main(): Promise<void> {
     logger.fatal('No channels connected');
     process.exit(1);
   }
+
+  // Start webhook server AFTER channels are connected so findChannel works
+  const webhookDeps: WebhookDeps = {
+    sendMessage: async (jid: string, text: string) => {
+      const channel = findChannel(channels, jid);
+      if (!channel) {
+        logger.warn(
+          { jid },
+          'No channel owns JID, cannot send webhook message',
+        );
+        return;
+      }
+      await channel.sendMessage(jid, text);
+    },
+    findChannel: (jid: string) => findChannel(channels, jid),
+    getMainGroupJid: () =>
+      Object.entries(registeredGroups).find(([, g]) => g.isMain)?.[0] ?? null,
+    registeredGroups: () => registeredGroups,
+  };
+  webhookServer = startWebhookServer(webhookDeps);
+
+  // Start Notion project poller (1.1 - Cerveau réactif)
+  startNotionPoller(webhookDeps);
 
   // Start subsystems (independently of connection handler)
   startSchedulerLoop({

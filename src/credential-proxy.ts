@@ -38,6 +38,19 @@ export function startCredentialProxy(
   const oauthToken =
     secrets.CLAUDE_CODE_OAUTH_TOKEN || secrets.ANTHROPIC_AUTH_TOKEN;
 
+  // Fail-fast : sans credentials, le proxy serait un trou noir a 401. Mieux vaut
+  // refuser de demarrer et forcer la remontee en logs que servir silencieusement.
+  if (authMode === 'api-key' && !secrets.ANTHROPIC_API_KEY) {
+    throw new Error(
+      'credential-proxy: api-key mode detected but ANTHROPIC_API_KEY is empty',
+    );
+  }
+  if (authMode === 'oauth' && !oauthToken) {
+    throw new Error(
+      'credential-proxy: oauth mode detected but CLAUDE_CODE_OAUTH_TOKEN and ANTHROPIC_AUTH_TOKEN are both empty. Check .env and run scripts/refresh-oauth.sh',
+    );
+  }
+
   const upstreamUrl = new URL(
     secrets.ANTHROPIC_BASE_URL || 'https://api.anthropic.com',
   );

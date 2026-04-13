@@ -504,9 +504,12 @@ export function updateTask(
 }
 
 export function deleteTask(id: string): void {
-  // Delete child records first (FK constraint)
-  db.prepare('DELETE FROM task_run_logs WHERE task_id = ?').run(id);
-  db.prepare('DELETE FROM scheduled_tasks WHERE id = ?').run(id);
+  // Transaction pour garantir l'atomicite des 2 DELETEs (pas d'orphelins en cas de crash entre les deux).
+  const tx = db.transaction((taskId: string) => {
+    db.prepare('DELETE FROM task_run_logs WHERE task_id = ?').run(taskId);
+    db.prepare('DELETE FROM scheduled_tasks WHERE id = ?').run(taskId);
+  });
+  tx(id);
 }
 
 export function getDueTasks(): ScheduledTask[] {
@@ -555,14 +558,21 @@ export function logTaskRun(log: TaskRunLog): void {
 
 // --- Notion project activity ---
 
-export function upsertNotionProject(project: NotionProjectActivity): { statusChanged: boolean; previousStatus: string | null } {
+export function upsertNotionProject(project: NotionProjectActivity): {
+  statusChanged: boolean;
+  previousStatus: string | null;
+} {
   const existing = db
-    .prepare('SELECT status FROM notion_project_activity WHERE notion_page_id = ?')
+    .prepare(
+      'SELECT status FROM notion_project_activity WHERE notion_page_id = ?',
+    )
     .get(project.notion_page_id) as { status: string } | undefined;
 
-  const statusChanged = existing !== undefined && existing.status !== project.status;
+  const statusChanged =
+    existing !== undefined && existing.status !== project.status;
 
-  db.prepare(`
+  db.prepare(
+    `
     INSERT INTO notion_project_activity (notion_page_id, client_slug, project_name, status, last_edited_time, last_checked_time, last_status_change_time, previous_status)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(notion_page_id) DO UPDATE SET
@@ -571,7 +581,8 @@ export function upsertNotionProject(project: NotionProjectActivity): { statusCha
       last_checked_time = excluded.last_checked_time,
       last_status_change_time = CASE WHEN excluded.status != notion_project_activity.status THEN excluded.last_checked_time ELSE notion_project_activity.last_status_change_time END,
       previous_status = CASE WHEN excluded.status != notion_project_activity.status THEN notion_project_activity.status ELSE notion_project_activity.previous_status END
-  `).run(
+  `,
+  ).run(
     project.notion_page_id,
     project.client_slug,
     project.project_name,
@@ -585,10 +596,16 @@ export function upsertNotionProject(project: NotionProjectActivity): { statusCha
   return { statusChanged, previousStatus: existing?.status ?? null };
 }
 
-export function getInactiveProjects(daysSince: number): NotionProjectActivity[] {
-  const cutoff = new Date(Date.now() - daysSince * 24 * 60 * 60 * 1000).toISOString();
+export function getInactiveProjects(
+  daysSince: number,
+): NotionProjectActivity[] {
+  const cutoff = new Date(
+    Date.now() - daysSince * 24 * 60 * 60 * 1000,
+  ).toISOString();
   return db
-    .prepare('SELECT * FROM notion_project_activity WHERE last_edited_time < ? ORDER BY last_edited_time ASC')
+    .prepare(
+      'SELECT * FROM notion_project_activity WHERE last_edited_time < ? ORDER BY last_edited_time ASC',
+    )
     .all(cutoff) as NotionProjectActivity[];
 }
 

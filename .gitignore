@@ -36,3 +36,11 @@ groups/global/*
 .nanoclaw/
 
 agents-sdk-docs
+
+# Local runtime artefacts
+nanoclaw.db
+mcp-logs.txt
+nanoclaw.code-workspace
+
+# Local worktrees (git worktrees, pas du code a versionner)
+.claude/worktrees/

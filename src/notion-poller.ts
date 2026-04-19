@@ -70,7 +70,10 @@ export function parseNotionProjects(
     // Client : relation (résolu via clientNames) ou select ou texte
     const clientProperty = page.properties?.Client;
     let clientSlug = '';
-    if (clientProperty?.type === 'relation' && clientProperty.relation?.length > 0) {
+    if (
+      clientProperty?.type === 'relation' &&
+      clientProperty.relation?.length > 0
+    ) {
       const clientId = clientProperty.relation[0].id;
       const resolvedName = clientNames?.get(clientId) || '';
       clientSlug = resolvedName

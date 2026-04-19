@@ -67,6 +67,7 @@ import './webhooks/fathom.js';
 import { startNotionPoller } from './notion-poller.js';
 import { runProjectScan } from './project-scanner.js';
 import { logger } from './logger.js';
+import { shouldSend } from './message-dedup.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
@@ -694,18 +695,24 @@ async function main(): Promise<void> {
     }
 
     const msUntilNext = nextMonday.getTime() - now.getTime();
-    logger.info({ nextRun: nextMonday.toISOString() }, 'Project scan scheduled');
+    logger.info(
+      { nextRun: nextMonday.toISOString() },
+      'Project scan scheduled',
+    );
 
     setTimeout(() => {
       runProjectScan(webhookDeps).catch((err) =>
         logger.error({ err }, 'Project scan error'),
       );
       // Re-schedule weekly
-      setInterval(() => {
-        runProjectScan(webhookDeps).catch((err) =>
-          logger.error({ err }, 'Project scan error'),
-        );
-      }, 7 * 24 * 60 * 60 * 1000);
+      setInterval(
+        () => {
+          runProjectScan(webhookDeps).catch((err) =>
+            logger.error({ err }, 'Project scan error'),
+          );
+        },
+        7 * 24 * 60 * 60 * 1000,
+      );
     }, msUntilNext);
   };
   scheduleWeeklyScan();
@@ -724,7 +731,11 @@ async function main(): Promise<void> {
         return;
       }
       const text = formatOutbound(rawText);
-      if (text) await channel.sendMessage(jid, text);
+      if (!text) return;
+      const dedup = shouldSend(jid, text);
+      if (!dedup.send) return;
+      const finalText = dedup.suffix ? text + dedup.suffix : text;
+      await channel.sendMessage(jid, finalText);
     },
   });
   startIpcWatcher({

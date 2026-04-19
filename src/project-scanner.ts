@@ -5,10 +5,14 @@ import type { NotionProjectActivity, WebhookDeps } from './types.js';
 const INACTIVITY_THRESHOLD_DAYS = 5;
 
 function daysSince(isoDate: string): number {
-  return Math.floor((Date.now() - new Date(isoDate).getTime()) / (24 * 60 * 60 * 1000));
+  return Math.floor(
+    (Date.now() - new Date(isoDate).getTime()) / (24 * 60 * 60 * 1000),
+  );
 }
 
-export function formatInactivityReport(projects: NotionProjectActivity[]): string | null {
+export function formatInactivityReport(
+  projects: NotionProjectActivity[],
+): string | null {
   if (projects.length === 0) return null;
 
   const lines = projects.map((p) => {
@@ -35,7 +39,10 @@ export async function runProjectScan(deps: WebhookDeps): Promise<void> {
 
   if (report) {
     await deps.sendMessage(mainJid, report);
-    logger.info({ inactiveCount: inactive.length }, 'Project inactivity report sent');
+    logger.info(
+      { inactiveCount: inactive.length },
+      'Project inactivity report sent',
+    );
   } else {
     logger.debug('No inactive projects found');
   }

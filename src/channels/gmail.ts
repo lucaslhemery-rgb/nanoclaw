@@ -7,9 +7,7 @@ import { OAuth2Client } from 'google-auth-library';
 
 // isMain flag is used instead of MAIN_GROUP_FOLDER constant
 import { CLIENT_EMAIL_MAPPING_PATH } from '../config.js';
-import {
-  classifyEmail,
-} from './gmail-triage.js';
+import { classifyEmail } from './gmail-triage.js';
 import { logger } from '../logger.js';
 import { registerChannel, ChannelOpts } from './registry.js';
 import {

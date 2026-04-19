@@ -10,7 +10,9 @@ describe('formatInactivityReport', () => {
         client_slug: 'azmk',
         project_name: 'Webinaire',
         status: 'En cours',
-        last_edited_time: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+        last_edited_time: new Date(
+          Date.now() - 7 * 24 * 60 * 60 * 1000,
+        ).toISOString(),
         last_checked_time: new Date().toISOString(),
         last_status_change_time: null,
         previous_status: null,
@@ -20,7 +22,9 @@ describe('formatInactivityReport', () => {
         client_slug: 'numadeo',
         project_name: 'VSL',
         status: 'En cours',
-        last_edited_time: new Date(Date.now() - 6 * 24 * 60 * 60 * 1000).toISOString(),
+        last_edited_time: new Date(
+          Date.now() - 6 * 24 * 60 * 60 * 1000,
+        ).toISOString(),
         last_checked_time: new Date().toISOString(),
         last_status_change_time: null,
         previous_status: null,

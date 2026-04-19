@@ -14,11 +14,7 @@ import {
   getWebhookHandler,
 } from './webhooks/registry.js';
 
-const WEBHOOK_DLQ_DIR = path.join(
-  process.cwd(),
-  'data',
-  'webhook-dlq',
-);
+const WEBHOOK_DLQ_DIR = path.join(process.cwd(), 'data', 'webhook-dlq');
 const WEBHOOK_RETRY_DELAYS_MS = [0, 5000, 15000];
 
 async function handleWithRetry(
@@ -36,7 +32,10 @@ async function handleWithRetry(
     try {
       await handler.handle(payload, deps);
       if (attempt > 0) {
-        logger.info({ source, attempt }, 'Webhook handler succeeded after retry');
+        logger.info(
+          { source, attempt },
+          'Webhook handler succeeded after retry',
+        );
       }
       return;
     } catch (err) {

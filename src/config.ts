@@ -7,7 +7,12 @@ import { isValidTimezone } from './timezone.js';
 // Read config values from .env (falls back to process.env).
 // Secrets (API keys, tokens) are NOT read here — they are loaded only
 // by the credential proxy (credential-proxy.ts), never exposed to containers.
-const envConfig = readEnvFile(['ASSISTANT_NAME', 'ASSISTANT_HAS_OWN_NUMBER', 'TZ', 'FATHOM_WEBHOOK_SECRET']);
+const envConfig = readEnvFile([
+  'ASSISTANT_NAME',
+  'ASSISTANT_HAS_OWN_NUMBER',
+  'TZ',
+  'FATHOM_WEBHOOK_SECRET',
+]);
 
 export const ASSISTANT_NAME =
   process.env.ASSISTANT_NAME || envConfig.ASSISTANT_NAME || 'Andy';
@@ -52,10 +57,7 @@ export const CREDENTIAL_PROXY_PORT = parseInt(
   process.env.CREDENTIAL_PROXY_PORT || '3001',
   10,
 );
-export const WEBHOOK_PORT = parseInt(
-  process.env.WEBHOOK_PORT || '3002',
-  10,
-);
+export const WEBHOOK_PORT = parseInt(process.env.WEBHOOK_PORT || '3002', 10);
 export const WEBHOOK_HOST = process.env.WEBHOOK_HOST || '0.0.0.0';
 export const WEBHOOK_BODY_LIMIT_BYTES = parseInt(
   process.env.WEBHOOK_BODY_LIMIT_BYTES || '1048576',

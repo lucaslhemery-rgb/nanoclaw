@@ -1,10 +1,111 @@
+import { spawn } from 'child_process';
 import crypto from 'crypto';
 import fs from 'fs';
+import os from 'os';
+import path from 'path';
 
 import { CLIENT_MAPPING_PATH, FATHOM_WEBHOOK_SECRET } from '../config.js';
 import { logger } from '../logger.js';
 import type { WebhookDeps, WebhookHandler } from '../types.js';
 import { registerWebhook } from './registry.js';
+
+// --- Event file layout (skill bridge) ---
+
+const HOME_DIR = process.env.HOME || os.homedir();
+const FATHOM_EVENTS_DIR = path.join(
+  HOME_DIR,
+  'nanoclaw',
+  'data',
+  'fathom-events',
+);
+const ANALYZE_SCRIPT = path.join(
+  HOME_DIR,
+  'nanoclaw',
+  'scripts',
+  'analyze-meeting.sh',
+);
+const AUTO_ANALYZE_DELAY_MS = 30_000; // 30s grace window for /notes-reunion to claim
+const L0_TITLE_REGEX =
+  /\b(l0|perso|health|finance|sport|family|doctor|cabinet|m\u00e9decin)\b/i;
+
+function ensureEventsDir(): void {
+  try {
+    fs.mkdirSync(FATHOM_EVENTS_DIR, { recursive: true });
+  } catch (err) {
+    logger.error({ err }, 'Failed to create fathom-events dir');
+  }
+}
+
+interface EventFilePayload {
+  recording_id: string;
+  slug: string;
+  title: string;
+  share_url: string;
+  received_at: string;
+  matched_on: string;
+}
+
+function writeEventFile(data: EventFilePayload): string | null {
+  ensureEventsDir();
+  const finalPath = path.join(FATHOM_EVENTS_DIR, `${data.recording_id}.json`);
+  if (fs.existsSync(finalPath)) {
+    logger.info(
+      { recording_id: data.recording_id },
+      'Fathom event already seen, skip dedup',
+    );
+    return null;
+  }
+  const tmpPath = `${finalPath}.tmp`;
+  try {
+    fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf-8');
+    fs.renameSync(tmpPath, finalPath);
+    return finalPath;
+  } catch (err) {
+    logger.error({ err, finalPath }, 'Failed to write fathom event file');
+    return null;
+  }
+}
+
+function scheduleAutoAnalyze(recordingId: string, slug: string): void {
+  const claimedMarker = path.join(FATHOM_EVENTS_DIR, `${recordingId}.claimed`);
+  const analyzedMarker = path.join(
+    FATHOM_EVENTS_DIR,
+    `${recordingId}.analyzed`,
+  );
+  setTimeout(() => {
+    if (fs.existsSync(claimedMarker)) {
+      logger.info(
+        { recording_id: recordingId },
+        'Fathom event claimed by skill, skip auto-analyze',
+      );
+      return;
+    }
+    if (fs.existsSync(analyzedMarker)) {
+      logger.info(
+        { recording_id: recordingId },
+        'Fathom event already analyzed, skip',
+      );
+      return;
+    }
+    if (!fs.existsSync(ANALYZE_SCRIPT)) {
+      logger.warn(
+        { path: ANALYZE_SCRIPT },
+        'analyze-meeting.sh missing, skip auto-analyze',
+      );
+      return;
+    }
+    logger.info(
+      { recording_id: recordingId, slug },
+      'Spawning auto-analyze (Option 2 catch-up)',
+    );
+    const child = spawn('bash', [ANALYZE_SCRIPT, recordingId, slug], {
+      detached: true,
+      stdio: 'ignore',
+      env: { ...process.env },
+    });
+    child.unref();
+  }, AUTO_ANALYZE_DELAY_MS);
+}
 
 // --- Client mapping ---
 
@@ -154,7 +255,8 @@ function detectClient(
   | null {
   // Priorité 1 : titre + participants (match fort)
   const strongTexts: string[] = [];
-  if (typeof payload.title === 'string') strongTexts.push(payload.title.toLowerCase());
+  if (typeof payload.title === 'string')
+    strongTexts.push(payload.title.toLowerCase());
   const participants = payload.calendar_invitees || payload.participants || [];
   for (const p of participants) {
     if (typeof p.name === 'string') strongTexts.push(p.name.toLowerCase());
@@ -221,6 +323,24 @@ const fathomHandler: WebhookHandler = {
     const shareUrl = data.share_url || data.url || '';
     const summary =
       data.default_summary || data.summary || data.short_summary || '';
+    const recordingId =
+      typeof data.recording_id === 'string' ||
+      typeof data.recording_id === 'number'
+        ? String(data.recording_id)
+        : '';
+
+    // L0 skip : meetings perso jamais analys\u00e9s, notif minimale
+    if (L0_TITLE_REGEX.test(title)) {
+      logger.info(
+        { title, recording_id: recordingId },
+        'Fathom L0 meeting, skip analyze',
+      );
+      await deps.sendMessage(
+        mainJid,
+        `*Fathom* L0 - ${title}\n(aucune analyse auto, zone L0)`,
+      );
+      return;
+    }
 
     const clientResult = detectClient(data);
 
@@ -255,13 +375,36 @@ const fathomHandler: WebhookHandler = {
       return;
     }
 
-    // Match unique
+    // Match unique : \u00e9crire event file + programmer auto-analyse si pas claim\u00e9
+    let eventWritten = false;
+    if (recordingId) {
+      const eventPath = writeEventFile({
+        recording_id: recordingId,
+        slug: clientResult.slug,
+        title,
+        share_url: shareUrl,
+        received_at: new Date().toISOString(),
+        matched_on: clientResult.matchedOn,
+      });
+      if (eventPath) {
+        eventWritten = true;
+        scheduleAutoAnalyze(recordingId, clientResult.slug);
+      }
+    } else {
+      logger.warn(
+        'Fathom payload missing recording_id, skip event file + auto-analyze',
+      );
+    }
+
     const msg = [
       `*Fathom* - Meeting ${clientResult.slug}`,
       `Titre : ${title}`,
       shareUrl ? `Lien : ${shareUrl}` : '',
       summary ? `\nResum\u00e9 : ${summary}` : '',
       `\nClient : ${clientResult.slug} (via ${clientResult.matchedOn})`,
+      eventWritten
+        ? `\nAnalyse auto dans 30s si aucune session /notes-reunion ouverte.`
+        : '',
     ]
       .filter(Boolean)
       .join('\n');

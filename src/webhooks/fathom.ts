@@ -43,6 +43,12 @@ interface EventFilePayload {
   share_url: string;
   received_at: string;
   matched_on: string;
+  // Persistance payload Fathom (R12 root-cause : sans ça, analyze-meeting.sh
+  // n'a aucune source de données car MCP Fathom pas hérité par `claude -p`)
+  default_summary?: string | null;
+  transcript?: unknown;
+  action_items?: unknown;
+  calendar_invitees?: unknown;
 }
 
 function writeEventFile(data: EventFilePayload): string | null {
@@ -385,6 +391,10 @@ const fathomHandler: WebhookHandler = {
         share_url: shareUrl,
         received_at: new Date().toISOString(),
         matched_on: clientResult.matchedOn,
+        default_summary: summary || null,
+        transcript: data.transcript ?? null,
+        action_items: data.action_items ?? null,
+        calendar_invitees: data.calendar_invitees ?? null,
       });
       if (eventPath) {
         eventWritten = true;

@@ -17,6 +17,7 @@ EVENTS_DIR="$HOME/nanoclaw/data/fathom-events"
 LOGS_DIR="$HOME/nanoclaw/logs/fathom-analyze"
 mkdir -p "$LOGS_DIR"
 
+EVENT_JSON="$EVENTS_DIR/${RECORDING_ID}.json"
 ANALYZED_MARKER="$EVENTS_DIR/${RECORDING_ID}.analyzed"
 CLAIMED_MARKER="$EVENTS_DIR/${RECORDING_ID}.claimed"
 LOG_FILE="$LOGS_DIR/${RECORDING_ID}.log"
@@ -31,21 +32,36 @@ if [[ -f "$ANALYZED_MARKER" ]]; then
   exit 0
 fi
 
+# Verification event file present (source de donnees unique, MCP Fathom pas herite par claude -p)
+if [[ ! -f "$EVENT_JSON" ]]; then
+  echo "$(date -u +%FT%TZ) Event JSON absent: $EVENT_JSON, abort" >> "$LOG_FILE"
+  exit 2
+fi
+
+# Check que le JSON contient transcript OU default_summary (sinon rien a analyser)
+HAS_SUMMARY=$(jq -r '(.default_summary // "") | length > 0' "$EVENT_JSON" 2>/dev/null || echo "false")
+HAS_TRANSCRIPT=$(jq -r '(.transcript // null) != null' "$EVENT_JSON" 2>/dev/null || echo "false")
+if [[ "$HAS_SUMMARY" != "true" && "$HAS_TRANSCRIPT" != "true" ]]; then
+  echo "$(date -u +%FT%TZ) Event JSON sans transcript ni summary, abort (handler webhook non a jour ?)" >> "$LOG_FILE"
+  exit 3
+fi
+
 # Marqueur atomique pour eviter double spawn
 touch "$ANALYZED_MARKER"
 
-echo "$(date -u +%FT%TZ) Auto-analyze start recording=$RECORDING_ID slug=$SLUG" >> "$LOG_FILE"
+echo "$(date -u +%FT%TZ) Auto-analyze start recording=$RECORDING_ID slug=$SLUG event_json=$EVENT_JSON" >> "$LOG_FILE"
 
 PROMPT="Tu es en mode analyse auto post-call Fathom (Option 2 catch-up passif).
 
 Contexte :
 - Recording Fathom : $RECORDING_ID
 - Client slug : $SLUG
+- Event file (source unique de donnees) : $EVENT_JSON
 - Source de verite client : ~/.claude/client-registry.md
 - Regles : R2 isolation client, R6 copy integrite, R8 zone conditionnelle (propositions flaggees)
 
 Mission :
-1. Via MCP Fathom : recupere get_summary + get_transcript pour recording_id $RECORDING_ID
+1. Lis $EVENT_JSON avec Read tool. Champs disponibles : title, share_url, default_summary, transcript, action_items, calendar_invitees. La source de donnees est LOCALE (pas de MCP Fathom a appeler).
 2. Lis ~/agency-os/clients/$SLUG/client.md + memory.md + projects/*/project.md (selon structure)
 3. Produis synthese structuree :
    - 3 points cles
@@ -64,7 +80,7 @@ Contraintes :
 - Ne jamais modifier copy valide (R6)
 - Propositions = [PROPOSITION - validation requise] jamais appliquees
 - Isolation R2 : ne touche pas a d autres clients
-- Si ambigu ou doute : skip write + log warning, notif uniquement
+- Si transcript vide ET summary vide : skip write + log warning (retour exit code 0 via message, mais pas de write memory.md)
 
 Demarre directement, pas de confirmation."
 
